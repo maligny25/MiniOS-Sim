@@ -1,3 +1,4 @@
+#include "sched/sched.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -8,8 +9,7 @@ int main(int argc, char *argv[]) {
     }
 
     if(strcmp(argv[1], "sched") == 0 && strcmp(argv[2], "a") == 0 && strcmp(argv[3], "fcfs") == 0) {
-        printf("Command applied! File: %s\n", argv[4]);
-        return 0;
+        return run_fcfs_first(argv[4]);
     }
 
     fprintf(stderr, "Error: Invalid command or arguments.\n");
