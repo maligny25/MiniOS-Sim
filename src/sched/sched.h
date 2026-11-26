@@ -32,4 +32,6 @@ typedef struct {
 
 int load_processes(const char *filepath, Process procs[], int *count);
 
+int run_scheduler(Process procs[], int count, const char *policy, int trace, int csv);
+
 #endif

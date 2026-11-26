@@ -18,7 +18,7 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < count; i++) {
             printf(" %s: arrival=%d, prio=%d, bursts=%d\n",procs[i].pid,procs[i].arrival,procs[i].orig_priority,procs[i].num_bursts);
         }
-        return 0;
+        return run_scheduler(procs, count, argv[3], 0, 0);
     }
 
     fprintf(stderr, "Error: Invalid command or arguments.\n");

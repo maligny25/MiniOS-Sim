@@ -77,5 +77,87 @@ int load_processes(const char *filepath, Process procs[], int *count) {
     return 0;
 }
 
+static void sort_by_pid(Process procs[], int count) {
+    for (int i = 0 ; i < count-1; i++) {
+        for (int j = 0 ; j < count-i-1; j++){
+            if (strcmp(procs[j].pid, procs[j+1].pid) > 0){
+                Process tmp = procs[j];
+                procs[j] = procs[j+1];
+                procs[j+1] = tmp;
+            }
+        }
+    }
+}
 
+int run_scheduler(Process procs[], int count, const char *policy, int trace, int csv){
+    (void)policy; (void)trace; (void)csv;
+    sort_by_pid(procs, count);
 
+    int tick = 0;
+    int terminated_count = 0;
+    int running_idx = -1;
+
+    while(terminated_count < count) {
+        for (int i = 0; i < count; i++) {
+            if (procs[i].state == STATE_NEW && procs[i].arrival == tick) {
+                procs[i].state = STATE_READY;
+                procs[i].ready_enter_time = tick;
+            } else if (procs[i].state == STATE_WAITING && procs[i].remaining_time == 0) {
+                procs[i].curr_burst_idx++;
+                procs[i].remaining_time = procs[i].bursts[procs[i].curr_burst_idx];
+                procs[i].state = STATE_READY;
+                procs[i].ready_enter_time = tick;
+            }
+
+        }
+
+        if (running_idx != -1 && procs[running_idx].remaining_time == 0) {
+            procs[running_idx].curr_burst_idx++;
+            if (procs[running_idx].curr_burst_idx == procs[running_idx].num_bursts) {
+                procs[running_idx].state = STATE_TERMINATED;
+                procs[running_idx].finish_time = tick;
+                terminated_count++;
+            } else {
+                procs[running_idx].state = STATE_WAITING;
+                procs[running_idx].remaining_time = procs[running_idx].bursts[procs[running_idx].curr_burst_idx];
+            }
+            running_idx = -1;
+        }
+
+        if (running_idx == -1 && terminated_count < count) {
+            int best_idx = -1;
+            for (int i = 0; i < count; i++) {
+                if (procs[i].state == STATE_READY) {
+                    if (best_idx == -1 || procs[i].ready_enter_time < procs[best_idx].ready_enter_time) {
+                        best_idx = i;
+                    }
+                }
+            }
+            if (best_idx != -1) {
+                running_idx = best_idx;
+                procs[running_idx].state = STATE_RUNNING;
+                if (procs[running_idx].first_run_time == -1) {
+                    procs[running_idx].first_run_time = tick;
+                }
+            }
+        }
+
+        if (terminated_count == count) {
+            break;
+        }
+
+        printf("Tick %d-%d: %s\n", tick, tick+1, (running_idx != -1) ? procs[running_idx].pid : "IDLE");
+
+        for (int i = 0; i < count; i++) {
+            if (procs[i].state == STATE_READY) {
+                procs[i].waiting_time++;
+            } else if (procs[i].state == STATE_RUNNING) {
+                procs[i].remaining_time--;
+            } else if (procs[i].state == STATE_WAITING) {
+                procs[i].remaining_time--;
+            }
+        }
+        tick++;
+    }
+    return 0;
+}
