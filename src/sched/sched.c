@@ -3,6 +3,12 @@
 #include <string.h>
 #include "sched.h"
 
+typedef struct{
+    char pid[32];
+    int start;
+    int end;
+} GanttBlock;
+
 int load_processes(const char *filepath, Process procs[], int *count) {
     FILE *fp= fopen(filepath,"r");
 
@@ -93,6 +99,8 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
     (void)policy; (void)trace; (void)csv;
     sort_by_pid(procs, count);
 
+    GanttBlock gantt[2048];
+    int gantt_count = 0;
     int tick = 0;
     int terminated_count = 0;
     int running_idx = -1;
@@ -146,7 +154,18 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
             break;
         }
 
-        printf("Tick %d-%d: %s\n", tick, tick+1, (running_idx != -1) ? procs[running_idx].pid : "IDLE");
+        const char *curr_pid = (running_idx != -1) ? procs[running_idx].pid : "IDLE";
+
+        if (gantt_count > 0 &&
+            strcmp(gantt[gantt_count-1].pid, curr_pid) == 0 &&
+            gantt[gantt_count - 1].end == tick) {
+            gantt[gantt_count - 1].end = tick + 1;
+        } else {
+            strcpy(gantt[gantt_count].pid, curr_pid);
+            gantt[gantt_count].start = tick;
+            gantt[gantt_count].end = tick + 1;
+            gantt_count++;
+        }
 
         for (int i = 0; i < count; i++) {
             if (procs[i].state == STATE_READY) {
@@ -159,5 +178,35 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
         }
         tick++;
     }
+    
+    if (csv) {
+        printf("pid,arrival,finish,turnaround,waiting,response\n");
+        for (int i = 0; i < count; i++){
+            int turnaround = procs[i].finish_time - procs[i].arrival;
+            int response = procs[i].first_run_time - procs[i].arrival;
+            printf("%s,%d,%d,%d,%d,%d\n",
+                    procs[i].pid,procs[i].arrival,procs[i].finish_time,
+                    turnaround, procs[i].waiting_time,response);
+        }
+        return 0;
+    }
+
+    printf("Gantt: ");
+    for (int i = 0; i < gantt_count; i++) {
+        printf("%s %d-%d%s", gantt[i].pid, gantt[i].start, gantt[i].end,
+        (i < gantt_count - 1) ? " | " : "\n");
+    }
+    
+    double sum_turn = 0, sum_wait = 0, sum_resp = 0;
+    for (int i = 0; i < count; i++) {
+        int turnaround = procs[i].finish_time - procs[i].arrival;
+        int response = procs[i].first_run_time - procs[i].arrival;
+        sum_turn += turnaround;
+        sum_wait += procs[i].waiting_time;
+        sum_resp += response;
+    }
+    printf("Avg Turnaround: %.2f | Avg Waiting: %.2f | Avg Response: %.2f\n",
+            sum_turn / count, sum_wait / count, sum_resp / count);
+
     return 0;
 }
