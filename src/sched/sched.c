@@ -96,7 +96,18 @@ static void sort_by_pid(Process procs[], int count) {
 }
 
 int run_scheduler(Process procs[], int count, const char *policy, int trace, int csv){
-    (void)policy; (void)trace; (void)csv;
+    (void)trace;
+    if(strcmp(policy, "fcfs") != 0 &&
+       strcmp(policy, "sjf") != 0 &&
+       strcmp(policy, "srtf") != 0 &&
+       strcmp(policy, "priority") != 0 &&
+       strcmp(policy, "rr") != 0) {
+       fprintf(stderr, "Error: Unknown scheduling policy '%s'\n", policy);
+       return 1;
+    }
+
+    int rr_slice = 0;
+
     sort_by_pid(procs, count);
 
     GanttBlock gantt[2048];
@@ -116,7 +127,35 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
                 procs[i].state = STATE_READY;
                 procs[i].ready_enter_time = tick;
             }
+        }
 
+        if (running_idx != -1 && procs[running_idx].remaining_time > 0) {
+            if (strcmp(policy, "srtf") == 0) {
+                for (int i = 0; i < count; i++) {
+                    if (procs[i].state == STATE_READY &&
+                        procs[i].remaining_time < procs[running_idx].remaining_time) {
+                        procs[running_idx].state = STATE_READY;
+                        procs[running_idx].ready_enter_time = tick;
+                        running_idx = -1;
+                        break;
+                    }
+                }
+            } else if(strcmp(policy, "priority") == 0) {
+                for (int i = 0; i < count; i++) {
+                    if (procs[i].state == STATE_READY &&
+                        procs[i].curr_priority < procs[running_idx].curr_priority) {
+                        procs[running_idx].state = STATE_READY;
+                        procs[running_idx].ready_enter_time = tick;
+                        running_idx = -1;
+                        break;
+                    }
+                }
+            } else if (strcmp(policy, "rr") == 0 && rr_slice == 4) {
+                procs[running_idx].state = STATE_READY;
+                procs[running_idx].ready_enter_time = tick;
+                running_idx = -1;
+                rr_slice = 0;
+            }
         }
 
         if (running_idx != -1 && procs[running_idx].remaining_time == 0) {
@@ -135,18 +174,55 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
         if (running_idx == -1 && terminated_count < count) {
             int best_idx = -1;
             for (int i = 0; i < count; i++) {
-                if (procs[i].state == STATE_READY) {
-                    if (best_idx == -1 || procs[i].ready_enter_time < procs[best_idx].ready_enter_time) {
-                        best_idx = i;
-                    }
+                if (procs[i].state != STATE_READY) continue;
+
+                if (best_idx == -1) {
+                    best_idx = i;
+                    continue;
                 }
+
+                int take_new = 0;
+                if (strcmp(policy, "fcfs") == 0 || strcmp(policy, "rr") == 0) {
+                    if (procs[i].ready_enter_time < procs[best_idx].ready_enter_time)
+                        take_new = 1;
+                } else if (strcmp(policy, "sjf") == 0 || strcmp(policy, "srtf") == 0) {
+                    if (procs[i].remaining_time < procs[best_idx].remaining_time ||
+                        (procs[i].remaining_time == procs[best_idx].remaining_time &&
+                         procs[i].ready_enter_time < procs[best_idx].ready_enter_time))
+                         take_new = 1;
+                } else if (strcmp(policy, "priority") == 0) {
+                    if (procs[i].curr_priority < procs[best_idx].curr_priority ||
+                        (procs[i].curr_priority == procs[best_idx].curr_priority &&
+                        procs[i].ready_enter_time < procs[best_idx].ready_enter_time))
+                        take_new = 1;
+                }
+
+                if (take_new) best_idx = i;
             }
+
             if (best_idx != -1) {
                 running_idx = best_idx;
                 procs[running_idx].state = STATE_RUNNING;
+                rr_slice = 0;
                 if (procs[running_idx].first_run_time == -1) {
                     procs[running_idx].first_run_time = tick;
                 }
+            }
+        }
+
+        for (int i = 0; i < count; i++) {
+            if (procs[i].state == STATE_READY) {
+                procs[i].waiting_time++;
+                if (strcmp(policy, "priority") == 0 &&
+                    procs[i].waiting_time % 5 == 0 &&
+                    procs[i].curr_priority > 0) {
+                    procs[i].curr_priority--;
+                }
+            } else if (procs[i].state == STATE_RUNNING){
+                procs[i].remaining_time--;
+                rr_slice++;
+            } else if (procs[i].state == STATE_WAITING) {
+                procs[i].remaining_time--;
             }
         }
 
@@ -167,15 +243,6 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
             gantt_count++;
         }
 
-        for (int i = 0; i < count; i++) {
-            if (procs[i].state == STATE_READY) {
-                procs[i].waiting_time++;
-            } else if (procs[i].state == STATE_RUNNING) {
-                procs[i].remaining_time--;
-            } else if (procs[i].state == STATE_WAITING) {
-                procs[i].remaining_time--;
-            }
-        }
         tick++;
     }
     
