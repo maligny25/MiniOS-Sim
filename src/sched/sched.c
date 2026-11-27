@@ -95,8 +95,8 @@ static void sort_by_pid(Process procs[], int count) {
     }
 }
 
-int run_scheduler(Process procs[], int count, const char *policy, int trace, int csv){
-    (void)trace;
+static int simulate_core(Process procs[], int count, const char *policy, int trace, int csv, int quiet,
+                         double *out_turn, double *out_wait, double *out_resp) {
     if(strcmp(policy, "fcfs") != 0 &&
        strcmp(policy, "sjf") != 0 &&
        strcmp(policy, "srtf") != 0 &&
@@ -121,11 +121,13 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
             if (procs[i].state == STATE_NEW && procs[i].arrival == tick) {
                 procs[i].state = STATE_READY;
                 procs[i].ready_enter_time = tick;
+                if (trace) printf("[tick %d] %s arrived -> READY\n", tick, procs[i].pid);
             } else if (procs[i].state == STATE_WAITING && procs[i].remaining_time == 0) {
                 procs[i].curr_burst_idx++;
                 procs[i].remaining_time = procs[i].bursts[procs[i].curr_burst_idx];
                 procs[i].state = STATE_READY;
                 procs[i].ready_enter_time = tick;
+                if (trace) printf("[tick %d] %s I/O done -> READY\n", tick, procs[i].pid);
             }
         }
 
@@ -134,6 +136,7 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
                 for (int i = 0; i < count; i++) {
                     if (procs[i].state == STATE_READY &&
                         procs[i].remaining_time < procs[running_idx].remaining_time) {
+                        if (trace) printf("[tick %d] %s preempted by %s -> READY\n", tick, procs[running_idx].pid, procs[i].pid);
                         procs[running_idx].state = STATE_READY;
                         procs[running_idx].ready_enter_time = tick;
                         running_idx = -1;
@@ -144,6 +147,7 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
                 for (int i = 0; i < count; i++) {
                     if (procs[i].state == STATE_READY &&
                         procs[i].curr_priority < procs[running_idx].curr_priority) {
+                        if (trace) printf("[tick %d] %s preempted by %s -> READY\n", tick, procs[running_idx].pid, procs[i].pid);
                         procs[running_idx].state = STATE_READY;
                         procs[running_idx].ready_enter_time = tick;
                         running_idx = -1;
@@ -151,6 +155,7 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
                     }
                 }
             } else if (strcmp(policy, "rr") == 0 && rr_slice == 4) {
+                if (trace) printf("[tick %d] %s quantum expired -> READY\n", tick, procs[running_idx].pid);
                 procs[running_idx].state = STATE_READY;
                 procs[running_idx].ready_enter_time = tick;
                 running_idx = -1;
@@ -164,11 +169,14 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
                 procs[running_idx].state = STATE_TERMINATED;
                 procs[running_idx].finish_time = tick;
                 terminated_count++;
+                if (trace) printf("[tick %d] %s terminated\n", tick, procs[running_idx].pid);
             } else {
                 procs[running_idx].state = STATE_WAITING;
                 procs[running_idx].remaining_time = procs[running_idx].bursts[procs[running_idx].curr_burst_idx];
+                if (trace) printf("[tick %d] %s CPU burst done -> WAITING (I/O=%d)\n", tick, procs[running_idx].pid, procs[running_idx].remaining_time);
             }
             running_idx = -1;
+            rr_slice = 0;
         }
 
         if (running_idx == -1 && terminated_count < count) {
@@ -207,6 +215,7 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
                 if (procs[running_idx].first_run_time == -1) {
                     procs[running_idx].first_run_time = tick;
                 }
+                if (trace) printf("[tick %d] dispatch %s (rem=%d, prio=%d)\n", tick, procs[running_idx].pid, procs[running_idx].remaining_time, procs[running_idx].curr_priority);
             }
         }
 
@@ -217,6 +226,7 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
                     procs[i].waiting_time % 5 == 0 &&
                     procs[i].curr_priority > 0) {
                     procs[i].curr_priority--;
+                    if (trace) printf("[tick %d] %s aged -> prio=%d\n", tick + 1, procs[i].pid, procs[i].curr_priority);
                 }
             } else if (procs[i].state == STATE_RUNNING){
                 procs[i].remaining_time--;
@@ -245,6 +255,21 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
 
         tick++;
     }
+
+    double sum_turn = 0, sum_wait = 0, sum_resp = 0;
+    for (int i = 0; i < count; i++) {
+        int turnaround = procs[i].finish_time - procs[i].arrival;
+        int response = procs[i].first_run_time - procs[i].arrival;
+        sum_turn += turnaround;
+        sum_wait += procs[i].waiting_time;
+        sum_resp += response;
+    }
+
+    if (out_turn) *out_turn = sum_turn / count;
+    if (out_wait) *out_wait = sum_wait  / count;
+    if (out_resp) *out_resp = sum_resp / count;
+
+    if (quiet) return 0;
     
     if (csv) {
         printf("pid,arrival,finish,turnaround,waiting,response\n");
@@ -264,16 +289,31 @@ int run_scheduler(Process procs[], int count, const char *policy, int trace, int
         (i < gantt_count - 1) ? " | " : "\n");
     }
     
-    double sum_turn = 0, sum_wait = 0, sum_resp = 0;
-    for (int i = 0; i < count; i++) {
-        int turnaround = procs[i].finish_time - procs[i].arrival;
-        int response = procs[i].first_run_time - procs[i].arrival;
-        sum_turn += turnaround;
-        sum_wait += procs[i].waiting_time;
-        sum_resp += response;
-    }
+
     printf("Avg Turnaround: %.2f | Avg Waiting: %.2f | Avg Response: %.2f\n",
             sum_turn / count, sum_wait / count, sum_resp / count);
 
+    return 0;
+}
+
+int run_scheduler(Process procs[], int count, const char *policy, int trace, int csv){
+    return simulate_core(procs, count, policy, trace, csv, 0, NULL, NULL, NULL);
+}
+
+int run_compare(const Process orig_procs[], int count) {
+    const char *policies[5]= {"fcfs", "sjf", "srtf", "priority", "rr"};
+    Process copy[MAX_PROCS];
+
+    printf("%-10s %15s %15s %15s\n", "Policy", "Avg Turnaround", "Avg Waiting", "Avg Response");
+    printf("-----------------------------------------------------------\n");
+
+    for (int p = 0; p < 5; p++) {
+        memcpy(copy, orig_procs, sizeof(Process) * count);
+        double avg_turn = 0, avg_wait = 0, avg_resp = 0;
+        if (simulate_core(copy, count, policies[p], 0, 0, 1, &avg_turn, &avg_wait, &avg_resp) != 0) {
+            return 1;
+        }
+        printf("%-10s %15.2f %15.2f %15.2f\n", policies[p], avg_turn, avg_wait, avg_resp);
+    }
     return 0;
 }

@@ -34,4 +34,6 @@ int load_processes(const char *filepath, Process procs[], int *count);
 
 int run_scheduler(Process procs[], int count, const char *policy, int trace, int csv);
 
+int run_compare(const Process orig_procs[], int count);
+
 #endif
